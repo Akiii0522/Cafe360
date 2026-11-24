@@ -6,10 +6,10 @@
     "@expo-google-fonts/pinyon-script": "^0.4.1",
     "@expo/vector-icons": "^15.0.2",
     "@supabase/supabase-js": "^2.117.3",
-    "expo": "~57.0.31",
+    "expo": "~57.0.32",
     "expo-camera": "~57.0.6",
     "expo-font": "~57.0.4",
-    "expo-image-picker": "~57.0.20",
+    "expo-image-picker": "~57.0.21",
     "expo-status-bar": "~57.0.1",
     "react": "19.2.3",
     "react-dom": "19.2.3",
@@ -20,10 +20,11 @@
     "react-native-web": "^0.21.2"
   },
   "scripts": {
-    "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
-    "web": "expo start --web"
+    "start": "expo start --lan",
+    "start:tunnel": "expo start --tunnel",
+    "android": "expo start --android --lan",
+    "ios": "expo start --ios --lan",
+    "web": "expo start --web --lan"
   },
   "private": true,
   "devDependencies": {

@@ -144,7 +144,7 @@ app.post('/api/auth/guest', async (req, res) => {
       email,
       password,
       email_confirm: true,
-      user_metadata: { full_name: fullName },
+      user_metadata: { full_name: fullName, role: 'guest' },
     });
     if (createError) throw createError;
     userId = created.user.id;
@@ -305,24 +305,64 @@ app.get('/api/admin/reports/summary', async (req, res) => {
     const result = await requireUser(req, res, ['admin', 'head_admin', 'branch_admin']);
     if (!result) return;
     const branchId = ['admin', 'head_admin'].includes(result.profile.role) ? req.query.branchId || null : result.profile.branch_id;
-    let orderQuery = (supabaseAdmin || supabase).from('orders').select('id,total,customer_id,order_items(quantity,unit_price,products(unit_cost))');
+    let orderQuery = (supabaseAdmin || supabase).from('orders')
+      .select('id,total,customer_id,status,created_at,order_items(quantity,unit_price,product_name,is_promo,products(unit_cost))');
     let stockQuery = (supabaseAdmin || supabase).from('inventory').select('quantity,low_stock_threshold,unit_cost');
+    let userQuery = (supabaseAdmin || supabase).from('profiles').select('id', { count: 'exact', head: true }).neq('role', 'guest');
     if (branchId) {
       orderQuery = orderQuery.eq('branch_id', branchId);
       stockQuery = stockQuery.eq('branch_id', branchId);
     }
-    const [{ data: orders, error: orderError }, { data: stock, error: stockError }] = await Promise.all([orderQuery, stockQuery]);
+    const [
+      { data: orders, error: orderError },
+      { data: stock, error: stockError },
+      { count: users, error: userError },
+    ] = await Promise.all([orderQuery, stockQuery, userQuery]);
     if (orderError) throw orderError;
     if (stockError) throw stockError;
-    const sales = orders.reduce((sum, order) => sum + Number(order.total), 0);
-    const costs = orders.reduce((sum, order) => sum + order.order_items.reduce((itemSum, item) => itemSum + Number(item.products?.unit_cost || 0) * item.quantity, 0), 0);
+    if (userError) throw userError;
+    const salesOrders = orders.filter((order) => order.status !== 'cancelled');
+    const sales = salesOrders.reduce((sum, order) => sum + Number(order.total), 0);
+    const costs = salesOrders.reduce((sum, order) => sum + order.order_items.reduce((itemSum, item) => itemSum + Number(item.products?.unit_cost || 0) * item.quantity, 0), 0);
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const firstDay = new Date(today);
+    firstDay.setUTCDate(firstDay.getUTCDate() - 6);
+    const dailySales = Array.from({ length: 7 }, (_, index) => {
+      const date = new Date(firstDay);
+      date.setUTCDate(firstDay.getUTCDate() + index);
+      return {
+        date: date.toISOString().slice(0, 10),
+        day: date.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' }),
+        sales: 0,
+      };
+    });
+    const dailySalesByDate = new Map(dailySales.map((day) => [day.date, day]));
+    const productSales = new Map();
+    for (const order of salesOrders) {
+      const day = dailySalesByDate.get(order.created_at.slice(0, 10));
+      if (day) day.sales += Number(order.total);
+      for (const item of order.order_items) {
+        if (item.is_promo) continue;
+        const product = productSales.get(item.product_name) || { name: item.product_name, units: 0, sales: 0 };
+        product.units += item.quantity;
+        product.sales += Number(item.unit_price) * item.quantity;
+        productSales.set(item.product_name, product);
+      }
+    }
+    const lowStock = stock.filter((item) => item.quantity <= item.low_stock_threshold).length;
     res.json({
       branchId,
       sales,
-      orders: orders.length,
-      averageOrder: orders.length ? sales / orders.length : 0,
-      customers: new Set(orders.map((order) => order.customer_id).filter(Boolean)).size,
-      lowStock: stock.filter((item) => item.quantity <= item.low_stock_threshold).length,
+      orders: salesOrders.length,
+      averageOrder: salesOrders.length ? sales / salesOrders.length : 0,
+      customers: new Set(salesOrders.map((order) => order.customer_id).filter(Boolean)).size,
+      users: users || 0,
+      totalStock: stock.reduce((sum, item) => sum + item.quantity, 0),
+      stockStatus: { lowStock, healthy: stock.length - lowStock },
+      salesByDay: dailySales,
+      topProducts: [...productSales.values()].sort((a, b) => b.sales - a.sales).slice(0, 5),
+      lowStock,
       inventoryValue: stock.reduce((sum, item) => sum + Number(item.unit_cost) * item.quantity, 0),
       costOfGoods: costs,
       grossProfit: sales - costs,
@@ -647,11 +687,18 @@ app.post('/api/pos/checkout', async (req, res) => {
     };
     const { data, error } = result.profile.role === 'guest'
       ? await supabaseAdmin.rpc('process_guest_checkout', { ...checkoutArgs, p_guest_id: result.user.id })
-      : await supabaseAdmin.rpc('process_customized_pos_checkout', {
-        ...checkoutArgs,
-        p_customer_code: result.profile.role === 'customer' ? result.profile.customer_code : req.body.customerCode || null,
-        p_channel: result.profile.role === 'customer' ? 'online' : 'counter',
-      });
+      : result.profile.role === 'customer'
+        ? await supabaseAdmin.rpc('process_customer_checkout', {
+          p_customer_id: result.user.id,
+          p_branch_id: branchId,
+          p_items: req.body.items,
+          p_pickup_at: pickupAt,
+        })
+        : await supabaseAdmin.rpc('process_customized_pos_checkout', {
+          ...checkoutArgs,
+          p_customer_code: req.body.customerCode || null,
+          p_channel: 'counter',
+        });
     if (error) throw error;
     await logActivity(result.user.id, branchId, 'pos.checkout', 'order', data.order.id, { total: data.order.total, promotion: data.promotion?.id, customerId: data.order.customer_id });
     res.status(201).json(data);
@@ -757,14 +804,21 @@ app.post('/api/orders', async (req, res) => {
         p_items: items,
         p_pickup_at: pickupAt || null,
       })
-      : await supabaseAdmin.rpc('process_customized_pos_checkout', {
-        p_actor_id: result.user.id,
-        p_branch_id: branchId,
-        p_customer_code: result.profile.customer_code,
-        p_items: items,
-        p_channel: 'online',
-        p_pickup_at: pickupAt || null,
-      });
+      : result.profile.role === 'customer'
+        ? await supabaseAdmin.rpc('process_customer_checkout', {
+          p_customer_id: result.user.id,
+          p_branch_id: branchId,
+          p_items: items,
+          p_pickup_at: pickupAt || null,
+        })
+        : await supabaseAdmin.rpc('process_customized_pos_checkout', {
+          p_actor_id: result.user.id,
+          p_branch_id: branchId,
+          p_customer_code: result.profile.customer_code,
+          p_items: items,
+          p_channel: 'online',
+          p_pickup_at: pickupAt || null,
+        });
     if (error) throw error;
     res.status(201).json(data);
   } catch (error) {
@@ -775,7 +829,7 @@ app.post('/api/orders', async (req, res) => {
 
 app.patch('/api/orders/:id/status', async (req, res) => {
   try {
-    const result = await requireUser(req, res, ['staff', 'admin', 'head_admin', 'branch_admin']);
+    const result = await requireUser(req, res, ['staff', 'cashier', 'barista', 'admin', 'head_admin', 'branch_admin']);
     if (!result) return;
     const allowed = ['new', 'preparing', 'ready_for_pickup', 'completed', 'cancelled'];
     if (!allowed.includes(req.body.status)) return res.status(400).json({ error: 'Invalid order status.' });
