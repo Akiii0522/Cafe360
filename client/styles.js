@@ -112,7 +112,7 @@ export const styles = StyleSheet.create({
   mobileBranch: { color: '#b9a99f', fontSize: 8, letterSpacing: 1.8, marginTop: 2 },
   closeButton: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: c.espressoSoft },
   closeIcon: { color: '#fff', fontSize: 24, lineHeight: 26 },
-  breadcrumb: { color: c.muted, fontSize: 12, flexShrink: 1 },
+  breadcrumb: { color: '#2a1c16', fontSize: 12, fontWeight: '600', flexShrink: 1, textShadowColor: 'rgba(255, 255, 255, 0.55)', textShadowRadius: 4 },
   location: { color: c.body, fontSize: 12, backgroundColor: c.surface, borderWidth: 1, borderColor: c.line, paddingVertical: 8, paddingHorizontal: 13, borderRadius: 999, overflow: 'hidden' },
   topbarSignOut: { color: c.brandDeep, fontSize: 11, fontWeight: '700' },
   content: { padding: 24, maxWidth: 1440, width: '100%' },

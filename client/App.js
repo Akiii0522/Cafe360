@@ -949,7 +949,10 @@ function AppContent() {
           {(role === 'customer' || role === 'guest') && <>
             <Animated.View style={[styles.cartFloatingButton, { transform: [{ scale: cartButtonScale }] }]}>
               <Pressable accessibilityRole="button" accessibilityLabel={`Open cart, ${cart.reduce((sum, item) => sum + item.quantity, 0)} items`} style={styles.cartFloatingPressable} onPress={() => setCartOpen(true)}>
-                <Text style={styles.cartFloatingText}>Cart · {cart.reduce((sum, item) => sum + item.quantity, 0)}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Ionicons name="cart-outline" size={24} color="#fff" />
+                    <Text style={styles.cartFloatingText}>{cart.reduce((sum, item) => sum + item.quantity, 0)}</Text>
+                  </View>
               </Pressable>
             </Animated.View>
             <Modal visible={cartOpen} transparent animationType="slide" onRequestClose={() => setCartOpen(false)}>
@@ -1047,7 +1050,6 @@ function AuthScreen({ accounts, authError, onLogin, onRegister, onGuest }) {
           <View style={styles.flex}>
             <Text style={styles.brandNameDark}>360 Degrees</Text>
             <Text style={styles.brandTagline}>SPECIALTY CAFE</Text>
-            <View style={styles.branchChip}><Text style={styles.branchChipText}>LIPA BRANCH</Text></View>
           </View>
         </View>
         {mode !== 'guest' && <View style={styles.authTabs}>
